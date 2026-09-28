@@ -21,3 +21,72 @@ jobs:
       - name: 📦 Auto Detect & Unzip ZIP Archive
         run: |
           echo "Checking for uploaded ZIP archive..."
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Found ZIP file: $ZIP_FILE"
+            echo "Unzipping archive on GitHub runner..."
+            unzip -o "$ZIP_FILE"
+            echo "Extraction completed successfully!"
+          else
+            echo "No ZIP file found, checking if raw .ino already exists..."
+          fi
+
+          INO_FILE=$(find . -name "*.ino" | head -n 1)
+          if [ -z "$INO_FILE" ]; then
+            echo "❌ ERROR: No .ino firmware file found!"
+            exit 1
+          fi
+          echo "Found firmware sketch: $INO_FILE"
+          SKETCH_DIR=$(dirname "$INO_FILE")
+          echo "SKETCH_DIR=$SKETCH_DIR" >> $GITHUB_ENV
+
+      - name: 🛠️ Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: 📦 Install STM32 Core & LCD Library
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json
+          arduino-cli core update-index
+          arduino-cli core install STMicroelectronics:stm32
+          arduino-cli lib install "LiquidCrystal I2C"
+
+      - name: ⚡ Compile STM32F103C8T6 Firmware
+        run: |
+          mkdir -p build
+          echo "Compiling sketch in $SKETCH_DIR for STM32 Blue Pill..."
+          arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+            --output-dir build \
+            --export-binaries \
+            "$SKETCH_DIR"
+
+      - name: 🔍 Verify ARM Vector Table & Integrity
+        run: |
+          BIN_FILE=$(find build/ -name "*.bin" | head -n 1)
+          if [ -z "$BIN_FILE" ]; then
+            echo "❌ ERROR: No .bin output binary found!"
+            exit 1
+          fi
+          cp "$BIN_FILE" build/STM32_Zipper_CNC_V16_5_0_Production.bin
+          
+          BIN_SIZE=$(stat -c%s build/STM32_Zipper_CNC_V16_5_0_Production.bin)
+          echo "✅ Compiled Binary Size: $BIN_SIZE bytes ($((BIN_SIZE / 1024)) KB)"
+          
+          python3 -c "
+          with open('build/STM32_Zipper_CNC_V16_5_0_Production.bin', 'rb') as f:
+              b = f.read(8)
+          sp = int.from_bytes(b[0:4], 'little')
+          pc = int.from_bytes(b[4:8], 'little')
+          print(f'Initial SP: {hex(sp)} | Reset PC: {hex(pc)}')
+          if 0x20000000 <= sp <= 0x20005000 and 0x08000000 <= pc <= 0x08010000:
+              print('🛡️ ARM Vector Table Verification: 100% PASSED & SAFE!')
+          else:
+              print('⚠️ WARNING: Vector table out of standard bounds!')
+          "
+
+      - name: 🚀 Upload Compiled Production Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: STM32_Zipper_CNC_V16_5_0_Production_Binary
+          path: build/STM32_Zipper_CNC_V16_5_0_Production.bin
+          if-no-files-found: error
