@@ -1,0 +1,23 @@
+name: Auto Unzip & Compile STM32 Firmware
+
+on:
+  push:
+    paths:
+      - '**.zip'
+      - '.github/workflows/**'
+      - '**.ino'
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ⚡ Unzip & Build STM32 V16.5.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 📦 Auto Detect & Unzip ZIP Archive
+        run: |
+          echo "Checking for uploaded ZIP archive..."
